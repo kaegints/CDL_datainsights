@@ -249,9 +249,9 @@
     }
 
     .controls label.control-label {
-      font-size: 0.70rem;
-      letter-spacing: 0.035em;
-      line-height: 1.12;
+      font-size: 0.66rem;
+      letter-spacing: 0.025em;
+      line-height: 1.08;
       white-space: nowrap;
     }
 
@@ -341,6 +341,19 @@
       padding: 16px;
       line-height: 1.55;
       font-size: 1.02rem;
+    }
+
+    .summary-box p {
+      margin: 0 0 12px;
+    }
+
+    .summary-box p:last-child {
+      margin-bottom: 0;
+    }
+
+    .summary-box strong {
+      font-weight: 900;
+      color: var(--purple-dark);
     }
 
     .table-wrap {
@@ -502,6 +515,25 @@
     }
 
     .pill-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .window-filter {
+      appearance: none;
+      border: 1px solid rgba(95,53,151,0.16);
+      background: rgba(243,221,247,0.55);
+      color: var(--purple-dark);
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-size: 0.72rem;
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    .window-filter.active {
+      background: var(--purple-dark);
+      color: white;
+      border-color: var(--purple-dark);
+      box-shadow: 0 10px 22px rgba(61,35,108,0.16);
+    }
 
     .site-footer {
       margin: 24px auto 0;
@@ -832,11 +864,6 @@
       <h1>Advanced Donor Insights Tool</h1>
       <p>This tool is designed to convert payment export data from Zeffy into advanced donor insights, including high-level campaign results, donor segments, monthly giving prospects, referral summaries, annual campaign-window analysis, and practical follow-up lists.</p>
       <p class="hero-data-note">Any data uploaded into this tool is stored in the browser session only. Data is not stored on a server or saved by default. Refreshing the page will clear all data.</p>
-      <div class="hero-actions">
-        <a class="privacy-note" href="#uploadPanel">Upload Zeffy export</a>
-        <span class="privacy-note">Local-only processing by default</span>
-        <span class="privacy-note">CSV and XLSX supported</span>
-      </div>
     </header>
 
     <main>
@@ -1077,15 +1104,10 @@
         <div class="section-title">
           <div>
             <h2>Annual campaign window analysis</h2>
-            <p class="helper">Records are assigned to CDL’s recommended seasonal fundraising windows using transaction dates.</p>
+            <p class="helper">Records are assigned to seasonal month groups using transaction dates. Select one or more filters to focus the preview.</p>
           </div>
         </div>
-        <div class="pill-row" style="margin-bottom: 14px;">
-          <span class="tag purple">Spring awareness: Mar–Apr</span>
-          <span class="tag purple">Back-to-school: Aug–Sep</span>
-          <span class="tag purple">Fall monthly conversion: Oct–Nov</span>
-          <span class="tag purple">Year-end giving: Giving Tuesday–Dec 31</span>
-        </div>
+        <div class="pill-row" id="windowFilterTags" style="margin-bottom: 14px;"></div>
         <div id="windowTable" class="table-wrap"></div>
       </section>
 
@@ -1218,7 +1240,8 @@
       tableCounter: 0,
       geoLevel: 'city',
       geoMetric: 'supporters',
-      geoSelectedArea: ''
+      geoSelectedArea: '',
+      windowFilters: []
     };
 
     const $ = (id) => document.getElementById(id);
@@ -1299,6 +1322,15 @@
         state.geoSelectedArea = target.getAttribute('data-geo-area') || '';
         renderGeo(state.reports);
       });
+      $('windowFilterTags').addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-window-filter]');
+        if (!btn || !state.reports || !state.reports.windowRows) return;
+        const key = btn.getAttribute('data-window-filter');
+        const filters = new Set(state.windowFilters || []);
+        if (filters.has(key)) filters.delete(key); else filters.add(key);
+        state.windowFilters = Array.from(filters);
+        renderWindows(state.reports);
+      });
       document.addEventListener('click', handleFilterMenuClick);
       document.addEventListener('change', handleTableFilterChange);
     }
@@ -1335,6 +1367,7 @@
       state.followupLists = {};
       state.currentFollowupKey = '';
       state.currentInsightPage = 'overview';
+      state.windowFilters = [];
       Object.values(state.chartInstances).forEach(chart => { try { chart.destroy(); } catch(e) {} });
       state.chartInstances = {};
       $('insightNav').classList.add('hidden');
@@ -1617,7 +1650,22 @@
       const monthlyProspects = prospectRowsInternal.length;
       const qualityStats = buildQualityStats(rows, duplicateRows);
       const monthlyInsight = buildMonthlyInsight(monthlyRows, campaignRowsInternal, rows);
-      const executiveSummary = buildExecutiveSummary({totalNet, totalGross, uniqueDonors, topCampaign, repeatDonors, recurringDonors, monthlyProspects, monthlyInsight});
+      const executiveSummary = buildExecutiveSummary({
+        totalNet,
+        totalGross,
+        totalRecords: rows.length,
+        uniqueDonors,
+        topCampaign,
+        repeatDonors,
+        recurringDonors,
+        monthlyProspects,
+        monthlyInsight,
+        monthlyRows,
+        campaignRowsInternal,
+        followupLists,
+        cleanupRows,
+        qualityStats
+      });
 
       return {
         settings,
@@ -1929,7 +1977,7 @@
         const dateValue = r.date ? r.date.getTime() : Infinity;
         if (!donorFirstMonth.has(key) || dateValue < donorFirstMonth.get(key)) donorFirstMonth.set(key, dateValue);
       });
-      const windows = ['Spring awareness and education','Late summer/back-to-school','Fall monthly donor conversion','Year-end giving','Outside recommended windows','Unknown / needs date review'];
+      const windows = ['Spring (March–April)','Back-to-school (August–September)','Fall monthly giving (October–November)','Year-end giving (Giving Tuesday–December 31)','Off-cycle / other months','Unknown / needs date review'];
       return windows.map(win => {
         const records = includedRows.filter(r => r.campaignWindow === win);
         const paid = records.filter(r => r.paidRecord);
@@ -1953,11 +2001,11 @@
     }
 
     function suggestWindowPriority(win, paid, free, monthly, revenue) {
-      if (win === 'Spring awareness and education') return free > paid ? 'Convert awareness engagement into later-year stewardship lists' : 'Use education content to identify warm supporters';
-      if (win === 'Late summer/back-to-school') return revenue > 0 ? 'Connect giving to school-year readiness and family impact' : 'Build a back-to-school engagement audience';
-      if (win === 'Fall monthly donor conversion') return monthly > 0 ? 'Steward current monthly donors and invite selected prospects' : 'Prioritize monthly giving prospect outreach';
-      if (win === 'Year-end giving') return revenue > 0 ? 'Prioritize timely thank-yous, tax receipt confidence, and January stewardship' : 'Review whether year-end appeal activity is missing from Zeffy';
-      if (win === 'Outside recommended windows') return 'Decide whether these forms are program payments, events, or off-cycle fundraising';
+      if (win === 'Spring (March–April)') return free > paid ? 'Convert spring awareness engagement into later-year stewardship lists' : 'Use spring education content to identify warm supporters';
+      if (win === 'Back-to-school (August–September)') return revenue > 0 ? 'Connect giving to school-year readiness and family impact' : 'Build a back-to-school engagement audience';
+      if (win === 'Fall monthly giving (October–November)') return monthly > 0 ? 'Steward current monthly donors and invite selected prospects' : 'Prioritize monthly giving prospect outreach';
+      if (win === 'Year-end giving (Giving Tuesday–December 31)') return revenue > 0 ? 'Prioritize timely thank-yous, tax receipt confidence, and January stewardship' : 'Review whether year-end appeal activity is missing from Zeffy';
+      if (win === 'Off-cycle / other months') return 'Decide whether these forms are program payments, events, or off-cycle fundraising';
       return 'Fix missing or invalid dates before assigning campaign timing';
     }
 
@@ -2070,13 +2118,48 @@
     }
 
     function buildExecutiveSummary(data) {
-      const topCampaignText = data.topCampaign ? `${data.topCampaign.campaignTitle} (${money(data.topCampaign.netRevenue)})` : 'No campaign with revenue detected';
-      return `Across the uploaded Zeffy extract, CDL recorded ${money(data.totalNet)} in net revenue from ${number(state.cleanedRows.length)} records and ${number(data.uniqueDonors)} unique supporters. The top campaign by revenue was ${topCampaignText}. The analysis identified ${number(data.repeatDonors)} repeat donors, ${number(data.recurringDonors)} current monthly or recurring donors, and ${number(data.monthlyProspects)} monthly giving prospects based on gift history, campaign engagement, or gift amount. ${data.monthlyInsight} Recommended next steps are to follow up with repeat donors, invite selected supporters into the monthly giving campaign, review records needing cleanup, and use campaign-level results to plan the next seasonal appeal.`;
+      const topCampaignText = data.topCampaign ? `${escapeHtml(data.topCampaign.campaignTitle)} (<strong>${money(data.topCampaign.netRevenue)}</strong>)` : 'No campaign with revenue detected';
+      const generated = new Date();
+      const generatedLabel = generated.toLocaleDateString('en-CA', {month:'long', day:'numeric', year:'numeric'});
+      const topMonth = (data.monthlyRows || []).slice().sort((a,b) => b.revenue - a.revenue)[0];
+      const topMonthText = topMonth && topMonth.revenue > 0 ? `${escapeHtml(topMonth.monthLabel)} (<strong>${money(topMonth.revenue)}</strong>, ${percent(data.totalNet ? topMonth.revenue / data.totalNet : 0)} of analyzed net revenue)` : 'no clear revenue month';
+      const firstTime = (data.followupLists && data.followupLists['First-time donors'] || []).length;
+      const highValue = (data.followupLists && data.followupLists['High-value donors'] || []).length;
+      const eventNoDonation = (data.followupLists && data.followupLists['Event/workshop participants with no donation'] || []).length;
+      const cleanup = (data.cleanupRows || []).length;
+      const next1 = monthRangeLabel(generated, 1);
+      const next3 = monthRangeLabel(generated, 3);
+      const next6 = monthRangeLabel(generated, 6);
+      const nextSeason = nextSeasonLabel(generated);
+      const repeatText = `<strong>${number(data.repeatDonors)}</strong> repeat donor${data.repeatDonors === 1 ? '' : 's'}`;
+      const prospectText = `<strong>${number(data.monthlyProspects)}</strong> monthly giving prospect${data.monthlyProspects === 1 ? '' : 's'}`;
+      const recurringText = `<strong>${number(data.recurringDonors)}</strong> current monthly/recurring donor${data.recurringDonors === 1 ? '' : 's'}`;
+      return `
+        <p><strong>Generated ${escapeHtml(generatedLabel)}.</strong> Across the uploaded Zeffy extract, CDL recorded <strong>${money(data.totalNet)}</strong> in analyzed net revenue from <strong>${number(data.totalRecords)}</strong> transaction records and <strong>${number(data.uniqueDonors)}</strong> unique supporters. The top campaign by revenue was ${topCampaignText}, and revenue was most concentrated in ${topMonthText}.</p>
+        <p>The donor file shows ${repeatText}, ${recurringText}, and ${prospectText} based on gift history, campaign engagement, or gift amount. The tool also identified <strong>${number(firstTime)}</strong> first-time donor${firstTime === 1 ? '' : 's'}, <strong>${number(highValue)}</strong> high-value donor${highValue === 1 ? '' : 's'}, and <strong>${number(eventNoDonation)}</strong> event/workshop participant${eventNoDonation === 1 ? '' : 's'} with no donation record in this export. ${escapeHtml(data.monthlyInsight)}</p>
+        <p><strong>Recommended next steps.</strong> In the next month (${escapeHtml(next1)}), prioritize data cleanup for <strong>${number(cleanup)}</strong> flagged record${cleanup === 1 ? '' : 's'}, thank recent and first-time donors, and prepare targeted outreach for ${repeatText}. Over the next three months (${escapeHtml(next3)}), invite selected supporters from the ${prospectText} list into the monthly giving campaign and use campaign-level results to plan ${escapeHtml(nextSeason)}. Over the next six months (${escapeHtml(next6)}), compare seasonal campaign performance, steward the ${recurringText}, and use the annual window analysis to prepare the next year-end or January follow-up cycle.</p>
+      `;
+    }
+
+    function monthRangeLabel(startDate, monthsAhead) {
+      const start = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      const end = new Date(startDate.getFullYear(), startDate.getMonth() + monthsAhead - 1, 1);
+      const fmt = d => d.toLocaleDateString('en-CA', {month:'short', year:'numeric'});
+      return monthsAhead === 1 ? fmt(start) : `${fmt(start)}–${fmt(end)}`;
+    }
+
+    function nextSeasonLabel(date) {
+      const month = date.getMonth() + 1;
+      if (month <= 2) return 'Spring (March–April)';
+      if (month <= 4) return 'late spring stewardship and early back-to-school planning';
+      if (month <= 7) return 'Back-to-school (August–September)';
+      if (month <= 9) return 'Fall monthly giving (October–November)';
+      return 'Year-end giving (Giving Tuesday–December 31) and January stewardship';
     }
 
     function renderAll(reports) {
       renderKpis(reports.kpis);
-      $('executiveSummary').textContent = reports.executiveSummary;
+      $('executiveSummary').innerHTML = reports.executiveSummary;
       renderCampaigns(reports);
       renderMonthly(reports);
       renderDonors(reports);
@@ -2298,8 +2381,12 @@
     }
 
     function renderWindows(reports) {
-      const rows = reports.windowRows.map(r => ({
-        'Campaign window': r.campaignWindow,
+      const allRows = reports.windowRows || [];
+      const active = new Set(state.windowFilters || []);
+      $('windowFilterTags').innerHTML = allRows.map(r => `<button type="button" class="window-filter ${active.has(r.campaignWindow) ? 'active' : ''}" data-window-filter="${escapeHtml(r.campaignWindow)}">${escapeHtml(r.campaignWindow)}</button>`).join('');
+      const visibleRows = active.size ? allRows.filter(r => active.has(r.campaignWindow)) : allRows;
+      const rows = visibleRows.map(r => ({
+        'Season and months': r.campaignWindow,
         'Revenue': money(r.revenue),
         'Supporters': number(r.supporters),
         'Paid records': number(r.paidRecords),
@@ -2309,7 +2396,7 @@
         'Monthly donors': number(r.monthlyDonors),
         'Suggested follow-up priority': r.suggestedPriority
       }));
-      $('windowTable').innerHTML = buildTable(rows, Object.keys(rows[0] || {}));
+      $('windowTable').innerHTML = rows.length ? buildTable(rows, Object.keys(rows[0] || {})) : '<div class="callout">No records match the selected seasonal filters.</div>';
     }
 
     function renderFollowups(reports) {
@@ -2602,7 +2689,7 @@
         'Paid record': r.paidRecord ? 'Yes' : 'No',
         'Free record': r.freeRecord ? 'Yes' : 'No',
         'Recurring/monthly': r.isRecurring ? 'Yes' : 'No',
-        'Campaign window': r.campaignWindow,
+        'Season and months': r.campaignWindow,
         'Payment method': r.paymentMethod,
         'Rate title / ticket type': r.rateTitle,
         'Ticket number': r.ticketNumber,
@@ -2614,7 +2701,7 @@
     }
 
     function copyExecutiveSummary() {
-      const text = $('executiveSummary').textContent || '';
+      const text = $('executiveSummary').innerText || $('executiveSummary').textContent || '';
       if (!text) return;
       navigator.clipboard.writeText(text).then(() => {
         $('copySummaryBtn').textContent = 'Copied';
@@ -2729,12 +2816,12 @@
       if (!date) return 'Unknown / needs date review';
       const month = date.getMonth() + 1;
       const gt = givingTuesday(date.getFullYear());
-      if (date >= gt && month === 12 || (date >= gt && date.getFullYear() === gt.getFullYear())) return 'Year-end giving';
-      if (month === 3 || month === 4) return 'Spring awareness and education';
-      if (month === 8 || month === 9) return 'Late summer/back-to-school';
-      if (month === 10 || month === 11) return 'Fall monthly donor conversion';
-      if (/giving tuesday|year end|year-end/i.test(campaignTitle || '')) return 'Year-end giving';
-      return 'Outside recommended windows';
+      if ((date >= gt && month === 12) || (date >= gt && date.getFullYear() === gt.getFullYear())) return 'Year-end giving (Giving Tuesday–December 31)';
+      if (month === 3 || month === 4) return 'Spring (March–April)';
+      if (month === 8 || month === 9) return 'Back-to-school (August–September)';
+      if (month === 10 || month === 11) return 'Fall monthly giving (October–November)';
+      if (/giving tuesday|year end|year-end/i.test(campaignTitle || '')) return 'Year-end giving (Giving Tuesday–December 31)';
+      return 'Off-cycle / other months';
     }
 
     function givingTuesday(year) {
